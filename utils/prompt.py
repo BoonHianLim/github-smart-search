@@ -11,10 +11,10 @@ You are a helpful assistant. Given a user query, extract a list of distinct keyw
 Example 1:
 User Query:
 
-I'm a researcher interested in frontend UI generation from designs or sketches. I want to learn about the latest developments in this area.
+I'm a researcher exploring multi-modal large language models. I'm particularly interested in how models process both images and text, and I want to understand the current state-of-the-art methods in this area.
 
 Keywords:
-sketch-to-code, design-to-code, frontend UI generation
+multi-modal LLM, vision-language models, multi-modal reasoning
 
 Example 2:
 User Query:
@@ -41,6 +41,8 @@ Keywords:
 chatbot, GPT, Discord integration
 
 Example 5:
+User Query:
+
 I am a student studying SC4051 distributed systems in NTU, and i want to know what the seniors do for their project.
 
 Keywords:
@@ -168,5 +170,29 @@ def get_custom_summarise_prompt_openai(prompt: str, readme: list[str]) -> list:
         {
             "role": "user",
             "content": prompt + "\n\n" + "\n\n".join(readme)
+        }
+    ]
+
+
+QUERY_REFINEMENT_PROMPT = """You are a helpful assistant that improves vague or informal user queries into clear, specific prompts suitable for searching GitHub repositories or summarizing their content.
+
+The refined prompt should:
+- Be concise and precise.
+- Include any relevant domain keywords (e.g., course codes, tools, technologies).
+- Specify the intent (e.g., “summarize the purpose of this repository”, “extract assignment-related details”).
+- Reflect the user’s background if implied (e.g., student, developer, researcher).
+- Return the refined prompt without any additional text.
+
+Refine the following user query:"""
+
+
+def get_query_refinement_prompt_openai(prompt: str) -> list:
+    """
+    Function to get the prompt for query refinement.
+    """
+    return [
+        {
+            "role": "user",
+            "content": QUERY_REFINEMENT_PROMPT + "\n\n" + prompt
         }
     ]

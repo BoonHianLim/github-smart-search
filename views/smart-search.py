@@ -1,13 +1,26 @@
 import re
 import time
+
 import streamlit as st
 import requests
-
 from loguru import logger
 
-from managers.github import get_repo_readme
+from views.components.advanced_filters import advanced_filters
+from views.components.repo_box import repo_box
+from managers.github import get_repo_readme, get_repos
 from managers.openai_manager import chat_completion
-from utils.prompt import RESEARCH_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, TECHNICAL_ANALYST_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, get_custom_summarise_prompt_openai, get_key_word_prompt_few_shots_openai, get_key_word_prompt_openai
+from utils.prompt import RESEARCH_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, TECHNICAL_ANALYST_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, get_custom_summarise_prompt_openai, get_key_word_prompt_few_shots_openai, get_key_word_prompt_openai, get_query_refinement_prompt_openai
+
+SUMMARIZE_PROMPTING_METHOD = [
+    "Normal"]
+LLM_PROMPTING_METHOD = ["LLM: Query Refinement"]
+TEMPLATE_PROMPTING_METHOD = [
+    "Template: Research Assistant", "Template: Technical Analyst"]
+SUMMARIZE_PROMPTING_METHOD.extend(LLM_PROMPTING_METHOD)
+SUMMARIZE_PROMPTING_METHOD.extend(TEMPLATE_PROMPTING_METHOD)
+
+TEMPLATE_PROMPTING_PROMPT = [
+    RESEARCH_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, TECHNICAL_ANALYST_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT]
 
 
 @st.dialog("Raw Data")
@@ -16,7 +29,7 @@ def show_json(data):
     st.button("Close", key="close_raw_data_button")
 
 
-st.title("🔍 GitHub Repository Search")
+st.title("GitHub Repository Smart Search 🧠🔍 ")
 st.write("Search for GitHub repositories using the GitHub API.")
 with st.expander("Your OpenAI API credentials details: (Set on the left)", expanded=False):
     st.markdown(
@@ -26,51 +39,60 @@ prompting_method = st.segmented_control(
 
 if "smart_search_user_input" not in st.session_state:
     st.session_state.smart_search_user_input = ""
-st.session_state.smart_search_user_input = st.text_area(
-    "What would you like to know today?", st.session_state.smart_search_user_input)
-if st.button("Extract"):
-    if st.session_state.smart_search_user_input:
-        if prompting_method == "Few-Shot":
-            keywords = chat_completion(
-                endpoint=st.session_state.endpoint.strip(),
-                api_key=st.session_state.api_key.strip(),
-                model=st.session_state.model.strip(),
-                prompt=get_key_word_prompt_few_shots_openai(
-                    st.session_state.smart_search_user_input),
-            )
-            keywords = re.sub(
-                r'^Keywords:\s*', '', keywords, flags=re.IGNORECASE).strip()
+
+search_bar_col, search_btn_col = st.columns(
+    [7, 1], vertical_alignment="bottom")
+with search_bar_col:
+    st.session_state.smart_search_user_input = st.text_area(
+        "What would you like to know today?", st.session_state.smart_search_user_input)
+with search_btn_col:
+    if st.button("Extract"):
+        if st.session_state.smart_search_user_input:
+            if prompting_method == "Few-Shot":
+                keywords = chat_completion(
+                    endpoint=st.session_state.endpoint.strip(),
+                    api_key=st.session_state.api_key.strip(),
+                    model=st.session_state.model.strip(),
+                    prompt=get_key_word_prompt_few_shots_openai(
+                        st.session_state.smart_search_user_input),
+                )
+                keywords = re.sub(
+                    r'^Keywords:\s*', '', keywords, flags=re.IGNORECASE).strip()
+            else:
+                keywords = chat_completion(
+                    endpoint=st.session_state.endpoint.strip(),
+                    api_key=st.session_state.api_key.strip(),
+                    model=st.session_state.model.strip(),
+                    prompt=get_key_word_prompt_openai(
+                        st.session_state.smart_search_user_input),
+                )
+            st.session_state.smart_search_keywords = keywords.split(",")
         else:
-            keywords = chat_completion(
-                endpoint=st.session_state.endpoint.strip(),
-                api_key=st.session_state.api_key.strip(),
-                model=st.session_state.model.strip(),
-                prompt=get_key_word_prompt_openai(
-                    st.session_state.smart_search_user_input),
-            )
-        st.session_state.smart_search_keywords = keywords.split(",")
-    else:
-        st.warning("Please enter a query to extract keywords.")
+            st.warning("Please enter a query to extract keywords.")
 
 if not st.session_state.get("smart_search_keywords"):
     st.stop()
 
 selected_queries = st.pills(
     "Keywords", st.session_state.get("smart_search_keywords", []), selection_mode="single", key="keywords_pills", default=st.session_state.smart_search_keywords[0])
+sort_by, order_by, per_page = advanced_filters()
+
 if st.button("Search"):
     logger.info(
         f"Searching for repositories with keywords: {selected_queries}")
-    response = requests.get(
-        "https://api.github.com/search/repositories", params={"q": selected_queries})
-
-    try:
-        response.raise_for_status()
-        data = response.json()
-        st.session_state.smart_search_response_data = response.json()
-        st.session_state.smart_search_show_results = True
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
-        st.session_state.smart_search_show_results = False
+    if not selected_queries:
+        st.warning("Please select a keyword to search.")
+    else:
+        try:
+            response = get_repos(selected_queries, per_page=per_page,
+                                 sort=sort_by if sort_by != "best-match" else None,
+                                 order=order_by)
+            data = response.json()
+            st.session_state.smart_search_response_data = response.json()
+            st.session_state.smart_search_show_results = True
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            st.session_state.smart_search_show_results = False
 
 if st.session_state.get("smart_search_show_results", False):
     data = st.session_state.smart_search_response_data
@@ -83,8 +105,8 @@ if st.session_state.get("smart_search_show_results", False):
     with subheader_button_col:
         if st.button("Raw Data", key="raw_data_button"):
             show_json(data)
-    st.write("Found **{}** repositories.".format(
-        data.get("total_count", 0)))
+    st.write("Found **{}** out of {} repositories.".format(
+        len(items), data.get("total_count", 0)))
 
     tabs = st.tabs(["Main", "Summarise"])
     # Store if sub-tabs are "loaded"
@@ -98,38 +120,31 @@ if st.session_state.get("smart_search_show_results", False):
             cols = st.columns(2)  # 2 columns for the grid
             for index, item in enumerate(items):
                 with cols[index % 2]:  # Alternate between col 0 and col 1
-                    with st.container(height=300):
-                        st.markdown(
-                            f"### [{item['name']}]({item['html_url']})")
-                        st.write(item['description'] or "No description.")
-                        st.caption(
-                            f"⭐ {item['stargazers_count']} stars | 🧑‍💻 {item['owner']['login']}")
-
-                        repo_owner = item["owner"]["login"]
-                        repo_name = item["name"]
-                        url = f"/details?repo_owner={repo_owner}&repo_name={repo_name}"
-
-                        if st.button("Details", key=f"details_{index}"):
-                            # Create link to the Details page
-                            st.markdown(
-                                f'<meta http-equiv="refresh" content="0; URL={url}">', unsafe_allow_html=True)
+                    repo_box(item, index)
 
     with tabs[1]:
-        SUMMARIZE_PROMPTING_METHOD = [
-            "Research Assistant Zero-Shot", "Technical Analyst Zero-Shot"]
-        DEFAULT_SUMMARIZE_PROMPT = [
-            RESEARCH_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, TECHNICAL_ANALYST_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT]
         selected_summarize_prompting_method = st.segmented_control(
             "Select a prompting method", SUMMARIZE_PROMPTING_METHOD, key="summarize_prompting_method", default=SUMMARIZE_PROMPTING_METHOD[0])
-        use_case = st.text_input("Enter your use case:",
-                                 placeholder="What are you thinking?")
+        user_query = st.text_input("Enter your query:",
+                                   placeholder="What are you thinking?")
 
         if not st.session_state.get("compiled_prompt"):
-            st.session_state.compiled_prompt = DEFAULT_SUMMARIZE_PROMPT[SUMMARIZE_PROMPTING_METHOD.index(
-                selected_summarize_prompting_method)].format(use_case=use_case)
+            st.session_state.compiled_prompt = ""
         if st.button("Create Summarise Prompt"):
-            st.session_state.compiled_prompt = DEFAULT_SUMMARIZE_PROMPT[SUMMARIZE_PROMPTING_METHOD.index(
-                selected_summarize_prompting_method)].format(use_case=use_case)
+            if selected_summarize_prompting_method in LLM_PROMPTING_METHOD:
+                refine_request = get_query_refinement_prompt_openai(user_query)
+                refine_response = chat_completion(
+                    endpoint=st.session_state.endpoint.strip(),
+                    api_key=st.session_state.api_key.strip(),
+                    model=st.session_state.model.strip(),
+                    prompt=refine_request,
+                )
+                st.session_state.compiled_prompt = refine_response
+            elif selected_summarize_prompting_method in TEMPLATE_PROMPTING_METHOD:
+                st.session_state.compiled_prompt = TEMPLATE_PROMPTING_PROMPT[TEMPLATE_PROMPTING_METHOD.index(
+                    selected_summarize_prompting_method)].format(use_case=user_query)
+            else:
+                st.session_state.compiled_prompt = user_query
         summarize_prompt = st.text_area(
             "Summarization Prompt:", st.session_state.compiled_prompt, height=200)
 

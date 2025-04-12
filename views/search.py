@@ -1,14 +1,13 @@
-import time
 import streamlit as st
-import requests
 
+from managers.github import get_repos
 from managers.openai_manager import chat_completion
 from utils.prompt import get_summarise_prompt_openai
+from views.components.advanced_filters import advanced_filters
+from views.components.repo_box import repo_box
+
 st.title("🔍 GitHub Repository Search")
 st.write("Search for GitHub repositories using the GitHub API.")
-
-query = st.text_input("Enter your search query:",
-                      placeholder="Search for repositories...")
 
 
 @st.dialog("Raw Data")
@@ -17,18 +16,45 @@ def show_json(data):
     st.button("Close", key="close_raw_data_button")
 
 
-if st.button("Search"):
-    response = requests.get(
-        "https://api.github.com/search/repositories", params={"q": query})
+search_bar_col, search_btn_col = st.columns(
+    [7, 1], vertical_alignment="bottom")
+query = ""
+if "sort_by" not in st.session_state:
+    st.session_state.sort_by = "best-match"
+if "order_by" not in st.session_state:
+    st.session_state.order_by = "desc"
+if "per_page" not in st.session_state:
+    st.session_state.per_page = 10
 
-    try:
-        response.raise_for_status()
-        data = response.json()
-        st.session_state.response_data = response.json()
-        st.session_state.show_results = True
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
-        st.session_state.show_results = False
+with search_bar_col:
+    query = st.text_input("Enter your search query:",
+                          placeholder="Search for repositories...")
+
+with search_btn_col:
+    search_selected = st.button("Search")
+    if search_selected:
+        try:
+            if query:
+                response = get_repos(query,
+                                     per_page=st.session_state.per_page,
+                                     sort=st.session_state.sort_by if st.session_state.sort_by != "best-match" else None,
+                                     order=st.session_state.order_by)
+                data = response.json()
+                st.session_state.response_data = response.json()
+                st.session_state.show_results = True
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            st.session_state.show_results = False
+
+if search_selected and not query:
+    st.warning("Please enter a search query.")
+
+sort_by, order_by, per_page = advanced_filters()
+st.session_state.update({
+    "sort_by": sort_by,
+    "order_by": order_by,
+    "per_page": per_page,
+})
 
 if st.session_state.get("show_results", False):
     data = st.session_state.response_data
@@ -41,8 +67,8 @@ if st.session_state.get("show_results", False):
     with subheader_button_col:
         if st.button("Raw Data", key="raw_data_button"):
             show_json(data)
-    st.write("Found **{}** repositories.".format(
-        data.get("total_count", 0)))
+    st.write("Found **{}** out of {} repositories.".format(
+        len(items), data.get("total_count", 0)))
 
     tabs = st.tabs(["Main", "Summarise"])
     # Store if sub-tabs are "loaded"
@@ -56,21 +82,7 @@ if st.session_state.get("show_results", False):
             cols = st.columns(2)  # 2 columns for the grid
             for index, item in enumerate(items):
                 with cols[index % 2]:  # Alternate between col 0 and col 1
-                    with st.container(height=300):
-                        st.markdown(
-                            f"### [{item['name']}]({item['html_url']})")
-                        st.write(item['description'] or "No description.")
-                        st.caption(
-                            f"⭐ {item['stargazers_count']} stars | 🧑‍💻 {item['owner']['login']}")
-
-                        repo_owner = item["owner"]["login"]
-                        repo_name = item["name"]
-                        url = f"/details?repo_owner={repo_owner}&repo_name={repo_name}"
-
-                        if st.button("Details", key=f"details_{index}"):
-                            # Create link to the Details page
-                            st.markdown(
-                                f'<meta http-equiv="refresh" content="0; URL={url}">', unsafe_allow_html=True)
+                    repo_box(item, index)
 
     with tabs[1]:
         with st.expander("Your OpenAI API credentials details: (Set on the left)", expanded=False):

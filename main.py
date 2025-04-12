@@ -1,5 +1,10 @@
 import streamlit as st
 
+CUSTOM_MODEL_NAME = "Other (Please specify)"
+OPENAI_MODELS = ["gpt-4o", "deepseek-chat",
+                 "grok-2-1212", "grok-3-beta", CUSTOM_MODEL_NAME]
+OPENAI_DEFAULT_URL = "https://api.openai.com/v1"
+
 st.set_page_config(
     page_title="Hello",
     page_icon="👋",
@@ -25,7 +30,7 @@ repo_details_page = st.Page(
 
 endpoint = st.sidebar.text_input(
     "OpenAI-Compatible / Azure Endpoint",
-    value="https://api.openai.com/v1",
+    value=OPENAI_DEFAULT_URL,
 )
 api_key = st.sidebar.text_input(
     "API Key",
@@ -34,10 +39,10 @@ api_key = st.sidebar.text_input(
 )
 model = st.sidebar.selectbox(
     "Model",
-    options=["gpt-4o", "deepseek-chat", "Other (Please specify)"],
+    options=OPENAI_MODELS,
     index=0,
 )
-if model == "Other (Please specify)":
+if model == CUSTOM_MODEL_NAME:
     model = st.sidebar.text_input(
         "Other Model",
         placeholder="gpt-3.5-turbo",
@@ -60,6 +65,7 @@ st.session_state.update({
 pg = st.navigation(
     pages=[
         smart_search_page,
+        search_page,
         repo_details_page
     ]
 )
