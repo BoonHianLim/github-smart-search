@@ -1,13 +1,15 @@
 import streamlit as st
 
 from managers.github import get_repos
-from managers.openai_manager import chat_completion
-from utils.prompt import get_summarise_prompt_openai
 from views.components.advanced_filters import advanced_filters
 from views.components.repo_box import repo_box
+from views.components.summarise import summarise_tab
 
 st.title("🔍 GitHub Repository Search")
 st.write("Search for GitHub repositories using the GitHub API.")
+with st.expander("Your OpenAI API credentials details: (Set on the left)", expanded=False):
+    st.markdown(
+        f"Endpoint: `{st.session_state.endpoint}`\nAPI Key: `{st.session_state.api_key}`\nModel: `{st.session_state.model}`")
 
 
 @st.dialog("Raw Data")
@@ -71,9 +73,6 @@ if st.session_state.get("show_results", False):
         len(items), data.get("total_count", 0)))
 
     tabs = st.tabs(["Main", "Summarise"])
-    # Store if sub-tabs are "loaded"
-    if "load_tabs" not in st.session_state:
-        st.session_state.load_tabs = {"Summarise": False}
 
     with tabs[0]:
         if not items:
@@ -85,26 +84,25 @@ if st.session_state.get("show_results", False):
                     repo_box(item, index)
 
     with tabs[1]:
-        with st.expander("Your OpenAI API credentials details: (Set on the left)", expanded=False):
-            st.markdown(
-                f"Endpoint: `{st.session_state.endpoint}`\nAPI Key: `{st.session_state.api_key}`\nModel: `{st.session_state.model}`")
-        if st.button("Load Summarise Content"):
-
-            if not st.session_state.endpoint or not st.session_state.api_key or not st.session_state.model:
-                st.error("Please enter your OpenAI API credentials.")
-            else:
-                with st.spinner("Loading..."):
-
-                    summarise_result = chat_completion(
-                        endpoint=st.session_state.endpoint.strip(),
-                        api_key=st.session_state.api_key.strip(),
-                        model=st.session_state.model.strip(),
-                        prompt=get_summarise_prompt_openai(
-                            [item["description"] for item in items if item["description"]]),
-                    )
-                    st.session_state.summarise_result = summarise_result
-                    st.session_state.load_tabs["Summarise"] = True
-
-        if st.session_state.load_tabs["Summarise"]:
-            st.markdown("### Summarised Content")
-            st.write(st.session_state.summarise_result)
+        if not st.session_state.get("compiled_prompt"):
+            st.session_state.compiled_prompt = ""
+        if not st.session_state.get("load_tabs"):
+            st.session_state.load_tabs = False
+        if not st.session_state.get("readme_contents"):
+            st.session_state.readme_contents = []
+        if not st.session_state.get("summarise_result"):
+            st.session_state.summarise_result = ""
+        new_compiled_prompt, new_summarise_result, new_readme_content, load_tabs = summarise_tab(st.session_state.compiled_prompt,
+                                                                                                 items,
+                                                                                                 st.session_state.load_tabs,
+                                                                                                 st.session_state.summarise_result,
+                                                                                                 st.session_state.readme_contents,
+                                                                                                 st.session_state.endpoint.strip(),
+                                                                                                 st.session_state.api_key.strip(),
+                                                                                                 st.session_state.model.strip())
+        st.session_state.update({
+            "compiled_prompt": new_compiled_prompt,
+            "load_tabs": load_tabs,
+            "readme_contents": new_readme_content,
+            "summarise_result": new_summarise_result,
+        })

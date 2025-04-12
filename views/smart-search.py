@@ -1,26 +1,14 @@
 import re
-import time
 
 import streamlit as st
-import requests
 from loguru import logger
 
 from views.components.advanced_filters import advanced_filters
 from views.components.repo_box import repo_box
 from managers.github import get_repo_readme, get_repos
 from managers.openai_manager import chat_completion
-from utils.prompt import RESEARCH_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, TECHNICAL_ANALYST_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, get_custom_summarise_prompt_openai, get_key_word_prompt_few_shots_openai, get_key_word_prompt_openai, get_query_refinement_prompt_openai
-
-SUMMARIZE_PROMPTING_METHOD = [
-    "Normal"]
-LLM_PROMPTING_METHOD = ["LLM: Query Refinement"]
-TEMPLATE_PROMPTING_METHOD = [
-    "Template: Research Assistant", "Template: Technical Analyst"]
-SUMMARIZE_PROMPTING_METHOD.extend(LLM_PROMPTING_METHOD)
-SUMMARIZE_PROMPTING_METHOD.extend(TEMPLATE_PROMPTING_METHOD)
-
-TEMPLATE_PROMPTING_PROMPT = [
-    RESEARCH_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT, TECHNICAL_ANALYST_ASSISTANT_ZERO_SHOT_SUMMARIZE_PROMPT]
+from utils.prompt import get_key_word_prompt_few_shots_openai, get_key_word_prompt_openai
+from views.components.summarise import summarise_tab
 
 
 @st.dialog("Raw Data")
@@ -109,9 +97,6 @@ if st.session_state.get("smart_search_show_results", False):
         len(items), data.get("total_count", 0)))
 
     tabs = st.tabs(["Main", "Summarise"])
-    # Store if sub-tabs are "loaded"
-    if "load_tabs" not in st.session_state:
-        st.session_state.load_tabs = {"Summarise": False}
 
     with tabs[0]:
         if not items:
@@ -123,89 +108,25 @@ if st.session_state.get("smart_search_show_results", False):
                     repo_box(item, index)
 
     with tabs[1]:
-        selected_summarize_prompting_method = st.segmented_control(
-            "Select a prompting method", SUMMARIZE_PROMPTING_METHOD, key="summarize_prompting_method", default=SUMMARIZE_PROMPTING_METHOD[0])
-        user_query = st.text_input("Enter your query:",
-                                   placeholder="What are you thinking?")
-
-        if not st.session_state.get("compiled_prompt"):
-            st.session_state.compiled_prompt = ""
-        if st.button("Create Summarise Prompt"):
-            if selected_summarize_prompting_method in LLM_PROMPTING_METHOD:
-                refine_request = get_query_refinement_prompt_openai(user_query)
-                refine_response = chat_completion(
-                    endpoint=st.session_state.endpoint.strip(),
-                    api_key=st.session_state.api_key.strip(),
-                    model=st.session_state.model.strip(),
-                    prompt=refine_request,
-                )
-                st.session_state.compiled_prompt = refine_response
-            elif selected_summarize_prompting_method in TEMPLATE_PROMPTING_METHOD:
-                st.session_state.compiled_prompt = TEMPLATE_PROMPTING_PROMPT[TEMPLATE_PROMPTING_METHOD.index(
-                    selected_summarize_prompting_method)].format(use_case=user_query)
-            else:
-                st.session_state.compiled_prompt = user_query
-        summarize_prompt = st.text_area(
-            "Summarization Prompt:", st.session_state.compiled_prompt, height=200)
-
-        if st.button("Summarize Now!"):
-            if not st.session_state.endpoint or not st.session_state.api_key or not st.session_state.model:
-                st.error("Please enter your OpenAI API credentials.")
-            else:
-                with st.spinner("Loading..."):
-                    readme_contents: list[str] = []
-                    repo_data_list: list[any] = []
-                    for item in items:
-                        while True:
-                            try:
-                                repo_owner = item["owner"]["login"]
-                                repo_name = item["name"]
-                                readme_content, repo_data = get_repo_readme(
-                                    repo_owner, repo_name)
-
-                                readme_contents.append(readme_content)
-                                repo_data_list.append(repo_data)
-                                break
-                            except requests.HTTPError as e:
-                                if e.response.status_code == 404:
-                                    logger.error(
-                                        f"README not found for repository: {item['name']}")
-                                    readme_contents.append("")
-                                    repo_data_list.append({})
-                                    break
-                                elif e.response.status_code == 403:
-                                    st.warning(
-                                        f"Rate limit exceeded for repository: {item['name']}. Waiting for 30 seconds...")
-                                    time.sleep(30)
-                                    continue
-                                else:
-                                    logger.error(
-                                        f"Error fetching README for repository: {item['name']}: {e}")
-                                    readme_contents.append("")
-                                    repo_data_list.append({})
-                                    break
-                            except Exception as e:
-                                raise e
-
-                    summarise_result = chat_completion(
-                        endpoint=st.session_state.endpoint.strip(),
-                        api_key=st.session_state.api_key.strip(),
-                        model=st.session_state.model.strip(),
-                        prompt=get_custom_summarise_prompt_openai(summarize_prompt,
-                                                                  readme_contents),
-                    )
-                    st.session_state.summarise_result = summarise_result
-                    st.session_state.readme_contents = readme_contents
-                    st.session_state.load_tabs["Summarise"] = True
-
-        if st.session_state.load_tabs["Summarise"]:
-            st.markdown("### Summarised Content")
-            st.write(st.session_state.summarise_result)
-
-            # collapsible sections for each repository
-            with st.expander("Readme Contents", expanded=False):
-                for i, item in enumerate(items):
-                    st.markdown(
-                        f"### [{item['name']}]({item['html_url']})")
-                    st.markdown(st.session_state.readme_contents[i])
-                    st.markdown("---")
+        if not st.session_state.get("smart_search_compiled_prompt"):
+            st.session_state.smart_search_compiled_prompt = ""
+        if not st.session_state.get("smart_search_load_tabs"):
+            st.session_state.smart_search_load_tabs = False
+        if not st.session_state.get("smart_search_readme_contents"):
+            st.session_state.smart_search_readme_contents = []
+        if not st.session_state.get("smart_search_summarise_result"):
+            st.session_state.smart_search_summarise_result = ""
+        new_compiled_prompt, new_summarise_result, new_readme_content, load_tabs = summarise_tab(st.session_state.smart_search_compiled_prompt,
+                                                                                                 items,
+                                                                                                 st.session_state.smart_search_load_tabs,
+                                                                                                 st.session_state.smart_search_summarise_result,
+                                                                                                 st.session_state.smart_search_readme_contents,
+                                                                                                 st.session_state.endpoint.strip(),
+                                                                                                 st.session_state.api_key.strip(),
+                                                                                                 st.session_state.model.strip())
+        st.session_state.update({
+            "smart_search_compiled_prompt": new_compiled_prompt,
+            "smart_search_load_tabs": load_tabs,
+            "smart_search_readme_contents": new_readme_content,
+            "smart_search_summarise_result": new_summarise_result,
+        })
